@@ -1,0 +1,30 @@
+Codex Cloud Git push diagnostic (redacted)
+Date: 2026-08-30 UTC
+Repository: KozueMitarai/CodexPushTest
+
+$ git status --short --branch
+## work
+
+$ git remote -v
+[no output in the initial environment]
+
+$ gh auth status
+You are not logged into any GitHub hosts.
+
+$ git ls-remote https://github.com/KozueMitarai/CodexPushTest.git
+d2fa103c31e01651897ced558c1100c7c68ddd0e  HEAD
+d2fa103c31e01651897ced558c1100c7c68ddd0e  refs/heads/main
+[command succeeded; public read connectivity was available]
+
+$ git remote add origin https://github.com/KozueMitarai/CodexPushTest.git
+
+$ GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/codex/push-diagnostic-20260830
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+[exit code: 128]
+
+User verification after the diagnostic:
+- Codex Cloud upper-right "Create PR" action: succeeded
+- Pull Request creation: succeeded
+- Merge on GitHub: succeeded
+
+No PAT, OAuth token, cookie, Authorization header, or secret value is included.
