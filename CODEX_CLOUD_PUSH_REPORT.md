@@ -1,0 +1,137 @@
+# Codex Cloud から GitHub へ push できない問題の調査報告
+
+調査日: 2026-08-30 (UTC)
+
+## 結論
+
+このタスク環境からは **push できませんでした**。直接の失敗理由は、GitHub の書き込み認証情報が環境に渡されていないことです。さらに、環境作成時点でローカルリポジトリに `origin` 自体が設定されていませんでした。
+
+添付画像では `KozueMitarai/CodexPushTest` が環境に関連付けられており、「エージェントのインターネットアクセス」は「有効: 無制限」です。しかし、UI 上の関連付けと、タスク VM 内の Git remote・GitHub 書き込み資格情報は一致していません。今回の症状は、公開 issue で報告されている Codex Cloud の「`work` ブランチだけがあり remote がない」という不具合と非常によく一致します。
+
+## 実測結果
+
+初期状態で以下を確認しました。
+
+| 確認項目 | 結果 | 判断 |
+|---|---|---|
+| `git status --short --branch` | `## work` | タスク固有のローカル `work` ブランチ |
+| `git remote -v` | 出力なし | `origin` が未設定 |
+| `.git/config` | `[core]` の設定のみ | remote 情報がチェックアウト時に注入されていない |
+| `gh auth status` | GitHub にログインしていない | `gh` の認証なし |
+| 認証関連の環境変数名 | `GH_TOKEN` / `GITHUB_TOKEN` なし | CLI が利用できるトークンなし |
+| `git ls-remote https://github.com/KozueMitarai/CodexPushTest.git` | 成功、`main` と HEAD は `d2fa103...` | GitHub への通信と公開リポジトリの読み取りは正常 |
+
+診断のため `origin` を公開 HTTPS URL として追加し、リモートを書き換えない `--dry-run` で push を試しました。
+
+```console
+$ GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/codex/push-diagnostic-20260830
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+
+終了コードは `128` でした。したがって、今回の失敗はネットワーク遮断や GitHub リポジトリの不存在ではなく、**書き込み時に必要な GitHub 認証がないこと**まで切り分けられます。`--dry-run` のため、この試験では GitHub 側にブランチや変更を作成していません。
+
+## 原因候補（可能性順）
+
+1. **Codex Cloud 側で remote と認証情報をタスクへ引き渡す処理の不具合**
+   - UI では対象 repository が選択済みなのに、実環境には remote がありません。
+   - 公開 issue [#40086](https://github.com/openai/codex/issues/40086)、[#22660](https://github.com/openai/codex/issues/22660)、[#12498](https://github.com/openai/codex/issues/12498) と同型です。
+2. **ChatGPT Codex Connector の GitHub App installation が対象 owner/repository にない、または権限が古い**
+   - GitHub アカウントを「接続済み」にしただけでは、対象 owner に GitHub App が install されていない場合があります。同様の混乱は [#38146](https://github.com/openai/codex/issues/38146) で報告されています。
+3. **接続している GitHub アカウントの取り違え**
+   - ブラウザでログイン中の GitHub アカウント、ChatGPT に接続したアカウント、対象 repository の owner が異なると、読み取りはできても書き込みが失敗し得ます。[#24735](https://github.com/openai/codex/issues/24735) には cloud connector とローカル `gh` の identity が別である事例があります。
+4. **Repository/App の権限不足**
+   - Connector が `KozueMitarai/CodexPushTest` への Contents write / Pull requests write 相当の権限を持たない、または「Selected repositories」に対象が追加されていない可能性があります。
+5. **ブランチ保護・ruleset**
+   - `main` への直接 push のみが拒否される場合の候補です。ただし今回はこちらに到達する前に認証で失敗し、診断先も新規 `codex/...` ブランチなので、主因である可能性は低いです。
+6. **ネットワーク障害**
+   - unrestricted 設定でも HTTPS が遮断された報告 [#20928](https://github.com/openai/codex/issues/20928) はあります。しかし今回は同じ VM から GitHub の `ls-remote` が成功したため、少なくとも調査時点の主因ではありません。
+
+## 同様の公開事例
+
+| Issue | 状況 | 今回との関係 |
+|---|---|---|
+| [openai/codex#40086](https://github.com/openai/codex/issues/40086) | Cloud task が detached checkout、remote なし、`work` のみ | ほぼ一致 |
+| [openai/codex#22660](https://github.com/openai/codex/issues/22660) | linked repository なのに remote/auth が継承されない | ほぼ一致 |
+| [openai/codex#12498](https://github.com/openai/codex/issues/12498) | `origin` が消え `work` のみになる | ほぼ一致 |
+| [openai/codex#21771](https://github.com/openai/codex/issues/21771) | commit が UI/GitHub に反映されず push 不可 | 関連症状 |
+| [openai/codex#38146](https://github.com/openai/codex/issues/38146) | Connector が別アカウントにだけ install され書き込み失敗 | 設定原因の候補 |
+| [openai/codex#20928](https://github.com/openai/codex/issues/20928) | unrestricted でも proxy が HTTPS を拒否 | 今回は読み取り成功のため可能性低 |
+
+issue は状況報告であり、OpenAI による原因確定や修正完了を意味しません。調査時点で上記は open でした。
+
+## 推奨する復旧手順
+
+1. **作業内容を退避**する（diff/patch のダウンロード等）。環境削除や再接続より先に行います。
+2. ChatGPT の GitHub 接続をいったん解除し、目的の GitHub アカウント `KozueMitarai` で再接続します。
+3. GitHub の **Settings → Applications → Installed GitHub Apps** で ChatGPT Codex Connector を開きます。
+4. Connector が `KozueMitarai` に install され、Repository access に `CodexPushTest` が含まれることを確認します。必要なら一度 uninstall/reinstall し、対象 repository を明示的に選びます。
+5. Codex Cloud 側で環境キャッシュをリセットするか、新しい環境を作成し直します。古い環境の `.git/config` 欠落がキャッシュされている可能性があります。
+6. 新しい読み取り専用診断タスクで次を実行させます。
+
+   ```bash
+   git status --short --branch
+   git remote -v
+   git config --get remote.origin.url
+   git ls-remote origin HEAD
+   ```
+
+7. `origin` が最初から存在することを確認後、空の診断 commit または小さな変更を **新規ブランチ**へ push し、PR 作成を試します。`main` へ直接 push しないことで ruleset の影響を分離できます。
+8. remote が再び空、または credential error ならユーザー側で PAT を環境変数に保存して回避しないでください。秘密漏えいと権限過多を避けるため、まず OpenAI Support に connector provisioning の調査を依頼します。
+
+## サポートへの連絡方法
+
+OpenAI の公式案内 [How can I contact support?](https://help.openai.com/en/articles/6614161-how-can-i-contact-support) に従い、[help.openai.com](https://help.openai.com/) 右下のチャットバブルから問い合わせます。最初に bot が切り分けを行うため、「Codex Cloud」「GitHub connection / push」「technical issue」を選び、必要なら担当者への引き継ぎを依頼します。
+
+送信前に以下を揃えると調査が速くなります。
+
+- ChatGPT アカウントのメールアドレスと契約プラン（パスワードは送らない）
+- 発生日時と timezone（例: 2026-08-30 UTC）
+- Codex environment 名、repository 名、失敗した task URL / task ID
+- 添付画像、エラー全文、上記診断コマンドの結果
+- 再現頻度、初回発生日、別環境・キャッシュリセット後も再現するか
+- GitHub App installation の対象 owner/repository が分かるスクリーンショット
+- **PAT、OAuth token、cookie、環境変数の値は絶対に添付しない**
+
+### 問い合わせ文面（コピー用）
+
+```text
+件名: Codex Cloud で linked GitHub repository の origin/認証が引き渡されず push できない
+
+OpenAI Support ご担当者様
+
+Codex Cloud (https://chatgpt.com/codex/cloud) で GitHub repository
+KozueMitarai/CodexPushTest を環境に関連付けていますが、毎回 push に失敗します。
+
+発生日時: 2026-08-30 [時刻] UTC
+ChatGPT プラン: [Plus/Pro/Business/Enterprise 等]
+環境名: CodexPushTest
+Task URL / ID: [記入]
+再現頻度: [毎回 / N回中N回]
+
+タスク VM での結果:
+- git status --short --branch: ## work
+- git remote -v: 出力なし
+- gh auth status: GitHub hosts に未ログイン
+- 公開 HTTPS URLへの git ls-remote: 成功
+- origin を手動追加後の git push --dry-run:
+  fatal: could not read Username for 'https://github.com': terminal prompts disabled
+
+UI では repository が選択され、Agent internet access は unrestricted です。
+GitHub 側では Codex Connector の installation と対象 repository access を
+[確認済み / 再接続済み] ですが、[新規環境でも] 再現します。
+
+Codex Cloud が checkout を作成する際、Git remote と connector の write credential が
+task に provisioning されているか、サーバーログをご確認いただけますか。
+類似事例として openai/codex#40086, #22660, #12498 が見つかりました。
+
+添付:
+1. 環境設定画面
+2. task URL とエラー画面
+3. token を除去した診断ログ
+
+よろしくお願いいたします。
+```
+
+## 調査上の制約
+
+この環境には GitHub 書き込み credential が存在しないため、実データを変更する push や PR 作成まで成功確認することはできませんでした。一方で、公開 repository の読み取り成功、remote 欠落、dry-run の credential error までは再現済みです。これは「ネットワークは到達可能だが、Codex Cloud の GitHub 書き込み連携がタスクへ渡っていない」という診断を十分に裏付けます。
