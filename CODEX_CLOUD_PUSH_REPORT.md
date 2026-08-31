@@ -140,3 +140,25 @@ task に provisioning しない動作が想定仕様か、サーバーログと�
 ## 調査上の制約
 
 このシェル環境には GitHub 書き込み credential が存在しないため、コマンドラインからの push は成功確認できませんでした。一方、公開 repository の読み取り成功、remote 欠落、dry-run の credential error は再現済みで、画面右上の PR 作成と GitHub 上の merge はユーザー側で成功確認済みです。この差から、ネットワーク障害や repository 全体の権限不足ではなく、**シェルの Git 経路とサーバー側 PR 作成経路で認証の扱いが異なる**と判断できます。
+
+## ローカル環境での作業（2026-08-31 追記）
+
+Cloud 環境とは別に、Windows のローカル環境へ本リポジトリをクローンし、ドキュメントの修正と Git コミットを行う運用を追加しました。上記の調査結果は 2026-08-30 の Cloud 環境についての記録であり、ローカル環境の状態とは区別してください。
+
+- **クローン:** HTTPS URL からの `git clone` に成功しました。`origin` は自動設定され、取得時の `main` は `227a9c8` でした。
+- **修正・コミット:** ローカルの作業ツリーでファイルを編集し、`git add` と `git commit` で変更を記録できます。本追記もこの手順でコミットします。
+- **プッシュ:** ローカルから `git push origin main` を実行する方針です。ただし、現在は GitHub の書き込み認証が未完了のため、成功は未確認です。認証を無人で確認した `git -c credential.interactive=false push --dry-run origin HEAD:refs/heads/main` は `fatal: unable to get password from user` で失敗しました。
+
+作業手順は以下のとおりです。push には対象リポジトリへの書き込み権限を持つ GitHub 認証が必要です。
+
+```powershell
+git clone https://github.com/KozueMitarai/CodexPushTest.git
+cd CodexPushTest
+# ドキュメントを修正
+git diff --check
+git add CODEX_CLOUD_PUSH_REPORT.md
+git commit -m "docs: record local clone and push workflow"
+git push origin main
+```
+
+この端末では Git Credential Manager が設定されています。認証は端末の正規のログイン手順で行い、トークンやパスワードをドキュメント・チャット・Git の remote URL に記載しないでください。認証後もブランチ保護などで拒否される場合は、作業ブランチへの push と PR による反映を検討します。ローカルでの成功だけでは、Cloud のシェル認証問題が解消したことにはなりません。
