@@ -170,3 +170,20 @@ git push origin main
 一方、`-c credential.interactive=false` を付けた確認は引き続き失敗しました。この環境では対話認証を禁止した試験の失敗だけを理由に、通常の push も不可能と判断すべきではありません。今後は通常の Git Credential Manager の認証手順を許可して `git push origin main` を実行します。認証画面でユーザー操作が必要になる場合があるため、毎回完全に無人で実行できることまでは保証しません。
 
 ローカルへのクローン、修正、コミットをエージェントが実施し、通常の認証手順を使って push する運用とします。本追記のコミットをその実際の push 確認に使用します。Cloud 環境についての過去の調査結果は変更しません。
+
+### 繰り返し認証画面が出る問題への対処（2026-08-31）
+
+前項の通常 push は成功しましたが、ユーザーによる認証画面の操作が必要でした。そのため、push 成功だけでは無人実行の確認になっていませんでした。
+
+追加診断で、Git Credential Manager に複数の GitHub アカウント情報が保存されていることを確認しました。使用アカウントを指定しない非対話の push 確認は失敗する一方、`KozueMitarai` を指定すると成功しました。保存された認証情報が使えないのではなく、使用アカウントが未指定で選択を要求されていた可能性が高いと判断します。
+
+このクローンだけに以下の設定を適用しました。ユーザー名のみを指定し、パスワードやトークンは保存しません。ほかのリポジトリやアカウントの設定は変更しません。
+
+```powershell
+git config --local credential.https://github.com.username KozueMitarai
+git -c credential.interactive=false push --dry-run origin main
+```
+
+設定後、認証画面を禁止した検証で `Everything up-to-date` を確認しました。本追記の push も同じ非対話条件で実施します。今後このクローンから作業する場合は保存済み設定が使用されます。別のクローンには引き継がれないため、必要に応じて同様に使用アカウントを設定します。トークンの失効や権限変更などで再認証が必要になる場合は別途対応します。
+
+参考: [Git の資格情報設定](https://git-scm.com/docs/gitcredentials)、[GCM の対話設定](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/configuration.md#credentialinteractive)。
